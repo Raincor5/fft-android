@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
+    kotlin("kapt")
 }
 
 android {
@@ -50,4 +51,12 @@ dependencies {
     implementation("com.squareup.retrofit2:retrofit:2.9.0")
     implementation("com.squareup.retrofit2:converter-gson:2.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.9.3")
+    // Room runtime
+    implementation("androidx.room:room-runtime:2.5.0")
+
+    // Annotation processor for Room
+    kapt("androidx.room:room-compiler:2.5.0")
+
+    // Optional: Room Kotlin extensions and Coroutines support
+    implementation("androidx.room:room-ktx:2.5.0")
 }

@@ -18,6 +18,15 @@ import androidx.camera.view.PreviewView
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Log
+import android.widget.TextView
+import androidx.room.Room
+import androidx.room.RoomDatabase
+import androidx.sqlite.db.SupportSQLiteDatabase
+import com.example.labels.database.AppDatabase
+import com.example.labels.database.daos.ProductDao
+import com.example.labels.database.populateDatabase
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.*
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody
@@ -39,9 +48,39 @@ class MainActivity : AppCompatActivity() {
     private lateinit var cameraExecutor: ExecutorService
     private val CAMERA_PERMISSION_CODE = 100
 
+    private lateinit var database: AppDatabase
+    private lateinit var productDao: ProductDao
+
+    private lateinit var resultsTextView: TextView
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+
+        resultsTextView = findViewById(R.id.resultsTextView)
+
+        applicationContext.deleteDatabase("product_database")
+        Log.d("Database", "Existing database deleted.")
+
+        database = Room.databaseBuilder(
+            applicationContext,
+            AppDatabase::class.java, "product_database"
+        )
+            .fallbackToDestructiveMigration() // Ensure database resets if schema changes
+            .build()
+
+        productDao = database.productDao()
+
+        // Populate the database after building it
+        CoroutineScope(Dispatchers.IO).launch {
+            if (productDao.getAllProducts().isEmpty()) { // Check if already populated
+                Log.d("Database", "Populating database for the first time...")
+                populateDatabase(productDao)
+                logProductList(productDao)
+            } else {
+                Log.d("Database", "Database already populated.")
+                logProductList(productDao)
+            }
+        }
 
         if (isCameraPermissionGranted()) {
             startCamera() // Start camera if permission is granted
@@ -197,36 +236,83 @@ class MainActivity : AppCompatActivity() {
     // TODO: Implement your API call here
     // Update sendToApi Function
     private fun sendToApi(imageData: ByteArray) {
-        // Prepare the image data as a RequestBody
         val requestBody = RequestBody.create("application/octet-stream".toMediaTypeOrNull(), imageData)
 
-        // Call the API
         val apiService = RetrofitClient.instance
         val call = apiService.processImage(requestBody)
 
         call.enqueue(object : Callback<ResponseBody> {
             override fun onResponse(call: Call<ResponseBody>, response: Response<ResponseBody>) {
                 if (response.isSuccessful) {
-                    // Handle successful response
                     val jsonResponse = response.body()?.string()
-                    Log.i("API Response", "Response: $jsonResponse")
+                    val labels = parseResponse(jsonResponse ?: "[]")
+
+                    // Filter labels before updating the UI
+                    CoroutineScope(Dispatchers.IO).launch {
+                        val filteredLabels = filterLabelsByProducts(labels)
+                        runOnUiThread {
+                            if (filteredLabels.isNotEmpty()) {
+                                displayLabels(filteredLabels)
+                            } else {
+                                resultsTextView.text = "No matching labels found."
+                            }
+                        }
+                    }
                 } else {
-                    // Handle API errors
-                    val errorResponse = response.errorBody()?.string()
-                    Log.e("API Error", "Error Response: $errorResponse")
+                    Log.e("API Error", "Error Response: ${response.errorBody()?.string()}")
                 }
             }
 
             override fun onFailure(call: Call<ResponseBody>, t: Throwable) {
-                // Handle call failure
                 Log.e("API Failure", "Failed to call API: ${t.message}")
             }
         })
     }
 
 
+    // Filter labels by checking if their text contains a product name
+    private suspend fun filterLabelsByProducts(labels: List<LabelResponse>): List<LabelResponse> {
+        val products = productDao.getAllProducts()
+        return labels.filter { label ->
+            products.any { product ->
+                label.text.contains(product.name, ignoreCase = true)
+            }
+        }.also {
+            Log.d("Database", "Filtered labels count: ${it.size}")
+        }
+    }
+
+
+    private fun parseResponse(json: String): List<LabelResponse> {
+        val gson = Gson()
+        val type = object : TypeToken<List<LabelResponse>>() {}.type
+        return gson.fromJson(json, type)
+    }
+
+    private fun displayLabels(labels: List<LabelResponse>) {
+        val formattedText = labels.joinToString("\n\n") { label ->
+            "${label.label_id}:\n${label.text}"
+        }
+        resultsTextView.text = formattedText
+    }
+
+    private fun logProductList(productDao: ProductDao) {
+        CoroutineScope(Dispatchers.IO).launch {
+            val productList = productDao.getAllProducts()
+            if (productList.isEmpty()) {
+                Log.d("Database", "No products found in the database.")
+            } else {
+                Log.d("Database", "Products in the database:")
+                productList.forEach { product ->
+                    Log.d("Database", "Product ID: ${product.id}, Name: ${product.name}")
+                }
+            }
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         cameraExecutor.shutdown()
     }
+
 }
