@@ -1,0 +1,142 @@
+<androidx.cardview.widget.CardView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/cardView"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    app:cardCornerRadius="8dp"
+    app:cardElevation="4dp"
+    app:cardBackgroundColor="#4FC3F7"
+    android:layout_margin="8dp">
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="12dp">
+
+        <!-- Product Name (Centered at the Top) -->
+        <TextView
+            android:id="@+id/labelName"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:textColor="#000000"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            tools:text="Vegatsu Defrosted" />
+
+        <!-- Batch Number (Top Right) -->
+        <TextView
+            android:id="@+id/labelBatch"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Batch No: 12345"
+            android:textColor="#000000"
+            android:textSize="12sp"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            tools:text="Batch No: 12345" />
+
+        <!-- Employee Name (Under Batch Number on the Right) -->
+        <TextView
+            android:id="@+id/empName"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Raivis"
+            android:textColor="#000000"
+            android:textSize="12sp"
+            app:layout_constraintTop_toBottomOf="@id/labelBatch"
+            app:layout_constraintEnd_toEndOf="parent"
+            tools:text="eddy" />
+
+        <!-- DEFROST (Left Section) -->
+        <TextView
+            android:id="@+id/labelDefrostTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="DEFROST"
+            android:textColor="#000000"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            app:layout_constraintTop_toBottomOf="@id/labelName"
+            app:layout_constraintStart_toStartOf="parent"
+            tools:text="DEFROST" />
+
+        <TextView
+            android:id="@+id/labelDefrost"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="23/11/22 14:42"
+            android:textColor="#000000"
+            android:textSize="12sp"
+            app:layout_constraintTop_toBottomOf="@id/labelDefrostTitle"
+            app:layout_constraintStart_toStartOf="parent"
+            tools:text="23/11/22 14:42" />
+
+        <!-- READY TO PREP (Left Section) -->
+        <TextView
+            android:id="@+id/labelReadyToPrepTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="READY TO PREP"
+            android:textColor="#000000"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            app:layout_constraintTop_toBottomOf="@id/labelDefrost"
+            app:layout_constraintStart_toStartOf="parent"
+            tools:text="READY TO PREP" />
+
+        <TextView
+            android:id="@+id/labelReadyToPrep"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="24/11/22 14:42"
+            android:textColor="#000000"
+            android:textSize="12sp"
+            app:layout_constraintTop_toBottomOf="@id/labelReadyToPrepTitle"
+            app:layout_constraintStart_toStartOf="parent"
+            tools:text="24/11/22 14:42" />
+
+        <!-- USE BY (Left Section) -->
+        <TextView
+            android:id="@+id/labelUseByTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="USE BY"
+            android:textColor="#000000"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            app:layout_constraintTop_toBottomOf="@id/labelReadyToPrep"
+            app:layout_constraintStart_toStartOf="parent"
+            tools:text="USE BY" />
+
+        <TextView
+            android:id="@+id/labelUseBy"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="26/11/22 E.O.D"
+            android:textColor="#000000"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            app:layout_constraintTop_toBottomOf="@id/labelUseByTitle"
+            app:layout_constraintStart_toStartOf="parent"
+            tools:text="26/11/22 E.O.D" />
+
+        <!-- Expiry Day (Bottom Left) -->
+        <TextView
+            android:id="@+id/labelExpiry"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="SATURDAY"
+            android:textColor="#000000"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            app:layout_constraintTop_toBottomOf="@id/labelUseBy"
+            app:layout_constraintStart_toStartOf="parent"
+            tools:text="SATURDAY" />
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+</androidx.cardview.widget.CardView>

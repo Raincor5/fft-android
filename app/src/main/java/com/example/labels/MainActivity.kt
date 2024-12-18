@@ -7,30 +7,23 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
-import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
-import android.Manifest
 import android.content.pm.PackageManager
-import androidx.core.app.ActivityCompat
+import android.graphics.Canvas
+import android.graphics.Color
 import android.widget.Toast
 import androidx.camera.view.PreviewView
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.util.Log
+import android.view.View
 import android.widget.TextView
-import androidx.room.Room
-import androidx.room.RoomDatabase
-import androidx.sqlite.db.SupportSQLiteDatabase
-import com.example.labels.database.AppDatabase
-import com.example.labels.database.daos.ProductDao
-import com.example.labels.database.populateDatabase
-import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
+import androidx.recyclerview.widget.ItemTouchHelper
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.example.labels.utils.LabelAdapter
 import kotlinx.coroutines.*
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody
-import okhttp3.ResponseBody
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import okhttp3.OkHttpClient
@@ -40,7 +33,8 @@ import retrofit2.http.POST
 import retrofit2.Callback
 import retrofit2.Response
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 class MainActivity : AppCompatActivity() {
 
@@ -48,64 +42,282 @@ class MainActivity : AppCompatActivity() {
     private lateinit var cameraExecutor: ExecutorService
     private val CAMERA_PERMISSION_CODE = 100
 
-    private lateinit var database: AppDatabase
-    private lateinit var productDao: ProductDao
+    private lateinit var loadingLayout: View
+    private lateinit var loadingText: TextView
+    private lateinit var viewFinder: PreviewView
+    private lateinit var recyclerView: RecyclerView
 
-    private lateinit var resultsTextView: TextView
+    private val labelMap = LinkedHashMap<String, LabelResponse>() // Storage for unique labels
+    private lateinit var adapter: LabelAdapter
+
+    private val savedLabels = mutableSetOf<String>() // Store unique keys for saved labels
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        resultsTextView = findViewById(R.id.resultsTextView)
+        // Initialize views
+        loadingLayout = findViewById(R.id.loadingLayout)
+        loadingText = findViewById(R.id.loadingText)
+        viewFinder = findViewById(R.id.viewFinder)
+        recyclerView = findViewById(R.id.labelRecyclerView)
 
-        applicationContext.deleteDatabase("product_database")
-        Log.d("Database", "Existing database deleted.")
 
-        database = Room.databaseBuilder(
-            applicationContext,
-            AppDatabase::class.java, "product_database"
-        )
-            .fallbackToDestructiveMigration() // Ensure database resets if schema changes
-            .build()
-
-        productDao = database.productDao()
-
-        // Populate the database after building it
-        CoroutineScope(Dispatchers.IO).launch {
-            if (productDao.getAllProducts().isEmpty()) { // Check if already populated
-                Log.d("Database", "Populating database for the first time...")
-                populateDatabase(productDao)
-                logProductList(productDao)
-            } else {
-                Log.d("Database", "Database already populated.")
-                logProductList(productDao)
-            }
-        }
-
-        if (isCameraPermissionGranted()) {
-            startCamera() // Start camera if permission is granted
-        } else {
-            requestCameraPermission()
-        }
-
+        // Setup RecyclerView and Adapter
+        adapter = LabelAdapter(labelMap)
+        recyclerView.layoutManager = LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
+        recyclerView.adapter = adapter
+        // Show loading screen with random duration
+        simulateLoadingScreen()
         // Initialize Camera Executor
         cameraExecutor = Executors.newSingleThreadExecutor()
     }
 
-    private fun isCameraPermissionGranted(): Boolean {
-        return ContextCompat.checkSelfPermission(
-            this,
-            Manifest.permission.CAMERA
-        ) == PackageManager.PERMISSION_GRANTED
+
+    // TODO: Implement loading of components check here
+    private fun simulateLoadingScreen() {
+        // Keep loading screen visible
+        loadingLayout.visibility = View.VISIBLE
+        viewFinder.visibility = View.GONE
+        recyclerView.visibility = View.GONE
+
+        CoroutineScope(Dispatchers.Main).launch {
+            try {
+                // Step 1: Initialize Camera
+                updateLoadingText("Adjusting the lens... Please hold still!")
+                val cameraDeferred = async { initializeCamera() }
+                delay(500)
+
+                // Step 2: Awaken API
+                updateLoadingText("Summoning the server from slumber...")
+                val apiDeferred = async { awakenApi() }
+
+                updateLoadingText("Fetching saved labels...")
+                fetchSavedLabels() // Fetch saved labels from the API
+                delay(500)
+
+                // Step 3: Setup Swipe Gestures
+                updateLoadingText("Setting up label interactions...")
+                setupSwipeGestures()
+                delay(500)
+
+                // Wait for camera and API initialization
+                awaitAll(cameraDeferred, apiDeferred)
+
+                // Step 4: Finalize loading
+                updateLoadingText("Almost ready... Cooking up the magic!")
+                delay(1000) // Small suspenseful delay
+
+                // Show the app's main content
+                loadingLayout.visibility = View.GONE
+                viewFinder.visibility = View.VISIBLE
+                recyclerView.visibility = View.VISIBLE
+
+                Toast.makeText(this@MainActivity, "App is Ready!", Toast.LENGTH_SHORT).show()
+
+            } catch (e: Exception) {
+                Log.e("LoadingScreen", "Error during initialization", e)
+                updateLoadingText("Oops! Something went wrong. Please restart.")
+                Toast.makeText(this@MainActivity, "Error during initialization", Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
-    private fun requestCameraPermission() {
-        ActivityCompat.requestPermissions(
-            this,
-            arrayOf(Manifest.permission.CAMERA),
-            CAMERA_PERMISSION_CODE
-        )
+    private suspend fun fetchSavedLabels() {
+        withContext(Dispatchers.IO) {
+            try {
+                val response = RetrofitClient.instance.fetchSavedLabels().execute()
+                if (response.isSuccessful && response.body() != null) {
+                    val labels = response.body()!!
+                    for (label in labels) {
+                        val uniqueKey = generateUniqueKey(label)
+                        savedLabels.add(uniqueKey)
+                    }
+                    Log.d("SavedLabels", "Fetched ${savedLabels.size} saved labels")
+                } else {
+                    Log.e("SavedLabels", "Failed to fetch saved labels: ${response.errorBody()?.string()}")
+                }
+            } catch (e: Exception) {
+                Log.e("SavedLabels", "Error fetching saved labels", e)
+            }
+        }
     }
+
+    private fun generateUniqueKey(label: LabelResponse): String {
+        val productName = label.parsed_data.product_name
+        val preppedDate = label.parsed_data.dates.getOrNull(0) ?: "N/A"
+        val useByDate = label.parsed_data.dates.getOrNull(1) ?: "N/A"
+        return "$productName|$preppedDate|$useByDate"
+    }
+
+    private fun saveLabelToDatabase(label: LabelResponse) {
+        // TODO: Implement saving to Render database
+        Log.d("SaveLabel", "Saving label: $label")
+    }
+
+    private fun updateLoadingText(text: String) {
+        loadingText.text = text
+        Log.d("LoadingScreen", text) // Optional: Log the loading text for debugging
+    }
+
+    private suspend fun initializeCamera() {
+        val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
+        return suspendCancellableCoroutine { continuation ->
+            cameraProviderFuture.addListener({
+                val cameraProvider = cameraProviderFuture.get()
+
+                val preview = Preview.Builder()
+                    .build()
+                    .also {
+                        it.setSurfaceProvider(viewFinder.surfaceProvider)
+                    }
+
+                imageCapture = ImageCapture.Builder().build()
+                val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+
+                try {
+                    cameraProvider.unbindAll()
+                    cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageCapture)
+                    continuation.resume(Unit)
+
+                    // Schedule snapshots after the camera is ready
+                    scheduleSnapshots()
+
+                } catch (e: Exception) {
+                    continuation.resumeWithException(e)
+                }
+            }, ContextCompat.getMainExecutor(this))
+        }
+    }
+
+
+    private suspend fun awakenApi() {
+        withContext(Dispatchers.IO) {
+            try {
+                val requestBody = RequestBody.create("application/octet-stream".toMediaTypeOrNull(), ByteArray(0))
+                val response = RetrofitClient.instance.processImage(requestBody).execute()
+                Log.d("API", "API Awakened: ${response.code()}")
+            } catch (e: Exception) {
+                Log.e("API", "Failed to awaken API", e)
+                throw e
+            }
+        }
+    }
+
+    private fun setupSwipeGestures() {
+        // Configure swipe gestures for RecyclerView
+        val itemTouchHelperCallback = object : ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.UP or ItemTouchHelper.DOWN) {
+
+            override fun onMove(
+                recyclerView: RecyclerView,
+                viewHolder: RecyclerView.ViewHolder,
+                target: RecyclerView.ViewHolder
+            ): Boolean {
+                return false // Drag-and-drop not needed
+            }
+
+            override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {
+                val position = viewHolder.adapterPosition
+                val itemView = viewHolder.itemView
+
+                if (direction == ItemTouchHelper.UP) {
+                    // Fade-out and shrink animation for swipe-up
+                    itemView.animate()
+                        .alpha(0f)
+                        .scaleX(0.5f)
+                        .scaleY(0.5f)
+                        .setDuration(300L)
+                        .withEndAction {
+                            recyclerView.post {
+                                val key = labelMap.keys.toList()[position]
+                                labelMap.remove(key)
+                                adapter.notifyItemRemoved(position)
+                                Toast.makeText(this@MainActivity, "Label discarded!", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                        .start()
+                } else if (direction == ItemTouchHelper.DOWN) {
+                    // Swipe-down logic remains unchanged (save)
+                    recyclerView.post {
+                        val key = labelMap.keys.toList()[position]
+                        val label = labelMap[key]
+                        if (label != null) {
+                            saveLabelToDatabase(label)
+                            labelMap.remove(key)
+                            adapter.notifyItemRemoved(position)
+                            Toast.makeText(this@MainActivity, "Label saved!", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+
+            override fun onChildDraw(
+                canvas: Canvas,
+                recyclerView: RecyclerView,
+                viewHolder: RecyclerView.ViewHolder,
+                dX: Float,
+                dY: Float,
+                actionState: Int,
+                isCurrentlyActive: Boolean
+            ) {
+                if (actionState == ItemTouchHelper.ACTION_STATE_SWIPE) {
+                    val itemView = viewHolder.itemView
+
+                    // Retrieve the original background color
+                    val originalColor = itemView.getTag(R.id.original_background_color) as Int
+
+                    // Calculate swipe progress (0 = start, 1 = full swipe)
+                    val progress = Math.abs(dY) / recyclerView.height.toFloat()
+
+                    // Subtle color blending: Soft Blue for Save, Light Gray for Discard
+                    val blendedColor = if (dY > 0) {
+                        blendColors(originalColor, Color.parseColor("#D6EAF8"), progress) // Swipe Down: Soft Blue
+                    } else {
+                        blendColors(originalColor, Color.parseColor("#E5E5E5"), progress) // Swipe Up: Light Gray
+                    }
+                    itemView.setBackgroundColor(blendedColor)
+
+                    // Apply scaling and fading
+                    val scale = 1 - progress * 0.1f
+                    itemView.scaleX = scale
+                    itemView.scaleY = scale
+                    itemView.alpha = 1 - progress
+
+                    // Translate the item
+                    itemView.translationY = dY
+                } else {
+                    super.onChildDraw(canvas, recyclerView, viewHolder, dX, dY, actionState, isCurrentlyActive)
+                }
+            }
+
+            private fun blendColors(colorFrom: Int, colorTo: Int, ratio: Float): Int {
+                val inverseRatio = 1 - ratio
+                val r = (Color.red(colorFrom) * inverseRatio + Color.red(colorTo) * ratio).toInt()
+                val g = (Color.green(colorFrom) * inverseRatio + Color.green(colorTo) * ratio).toInt()
+                val b = (Color.blue(colorFrom) * inverseRatio + Color.blue(colorTo) * ratio).toInt()
+                return Color.rgb(r, g, b)
+            }
+
+            override fun clearView(recyclerView: RecyclerView, viewHolder: RecyclerView.ViewHolder) {
+                super.clearView(recyclerView, viewHolder)
+                val itemView = viewHolder.itemView
+
+                // Restore the original background color
+                val originalColor = itemView.getTag(R.id.original_background_color) as? Int ?: Color.BLUE
+                itemView.setBackgroundColor(originalColor)
+
+                // Reset transformations
+                itemView.alpha = 1f
+                itemView.scaleX = 1f
+                itemView.scaleY = 1f
+                itemView.translationY = 0f
+            }
+        }
+
+        val itemTouchHelper = ItemTouchHelper(itemTouchHelperCallback)
+        itemTouchHelper.attachToRecyclerView(recyclerView)
+    }
+
 
     override fun onRequestPermissionsResult(
         requestCode: Int,
@@ -164,6 +376,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun scheduleSnapshots() {
+        Log.d("CameraApp", "Scheduling snapshots every 5 seconds")
         val handler = Handler(Looper.getMainLooper())
         val interval = 5000L // Every 5 seconds
 
@@ -177,15 +390,15 @@ class MainActivity : AppCompatActivity() {
         handler.post(takeSnapshot)
     }
 
-    private var lastSnapshot: File? = null
 
     private fun captureSnapshot() {
         imageCapture.takePicture(
-            ContextCompat.getMainExecutor(this), // Avoid blocking the main thread
+            ContextCompat.getMainExecutor(this),
             object : ImageCapture.OnImageCapturedCallback() {
                 override fun onCaptureSuccess(image: ImageProxy) {
+                    // Launch a coroutine to process the image
                     CoroutineScope(Dispatchers.IO).launch {
-                        processImageProxy(image) // Process in the background
+                        processImageProxy(image)
                     }
                     super.onCaptureSuccess(image)
                 }
@@ -196,6 +409,7 @@ class MainActivity : AppCompatActivity() {
             }
         )
     }
+
 
     private suspend fun processImageProxy(image: ImageProxy) {
         try {
@@ -214,14 +428,23 @@ class MainActivity : AppCompatActivity() {
     // Define the Retrofit interface
     interface ApiService {
         @POST("process-image")
-        fun processImage(@Body image: RequestBody): Call<ResponseBody>
+        fun processImage(@Body image: RequestBody): Call<List<LabelResponse>>
+
+        @POST("fetch-saved-labels")
+        fun fetchSavedLabels(): Call<List<LabelResponse>>
+
     }
+
 
     // Retrofit client setup
     object RetrofitClient {
         private const val BASE_URL = "https://ftt-api.onrender.com/" // Replace with your server's URL
 
-        private val client = OkHttpClient.Builder().build()
+        private val client = OkHttpClient.Builder()
+            .connectTimeout(0, java.util.concurrent.TimeUnit.MILLISECONDS) // No connection timeout
+            .readTimeout(0, java.util.concurrent.TimeUnit.MILLISECONDS)    // No read timeout
+            .writeTimeout(0, java.util.concurrent.TimeUnit.MILLISECONDS)   // No write timeout
+            .build()
 
         val instance: ApiService by lazy {
             Retrofit.Builder()
@@ -235,84 +458,59 @@ class MainActivity : AppCompatActivity() {
 
     // TODO: Implement your API call here
     // Update sendToApi Function
-    private fun sendToApi(imageData: ByteArray) {
-        val requestBody = RequestBody.create("application/octet-stream".toMediaTypeOrNull(), imageData)
+    private fun sendToApi(bytes: ByteArray) {
+        val requestBody = RequestBody.create("application/octet-stream".toMediaTypeOrNull(), bytes)
 
-        val apiService = RetrofitClient.instance
-        val call = apiService.processImage(requestBody)
-
-        call.enqueue(object : Callback<ResponseBody> {
-            override fun onResponse(call: Call<ResponseBody>, response: Response<ResponseBody>) {
-                if (response.isSuccessful) {
-                    val jsonResponse = response.body()?.string()
-                    val labels = parseResponse(jsonResponse ?: "[]")
-
-                    // Filter labels before updating the UI
-                    CoroutineScope(Dispatchers.IO).launch {
-                        val filteredLabels = filterLabelsByProducts(labels)
-                        runOnUiThread {
-                            if (filteredLabels.isNotEmpty()) {
-                                displayLabels(filteredLabels)
-                            } else {
-                                resultsTextView.text = "No matching labels found."
-                            }
-                        }
+        RetrofitClient.instance.processImage(requestBody).enqueue(object : Callback<List<LabelResponse>> {
+            override fun onResponse(call: Call<List<LabelResponse>>, response: Response<List<LabelResponse>>) {
+                if (response.isSuccessful && response.body() != null) {
+                    val newLabels = response.body()!!
+                    Log.d("API", "Received Labels: $newLabels")
+                    runOnUiThread {
+                        appendNewLabels(newLabels)
                     }
                 } else {
-                    Log.e("API Error", "Error Response: ${response.errorBody()?.string()}")
+                    Log.e("API", "Error: ${response.errorBody()?.string()}")
                 }
             }
 
-            override fun onFailure(call: Call<ResponseBody>, t: Throwable) {
-                Log.e("API Failure", "Failed to call API: ${t.message}")
+            override fun onFailure(call: Call<List<LabelResponse>>, t: Throwable) {
+                Log.e("API", "API call failed: ${t.message}")
             }
         })
     }
 
 
-    // Filter labels by checking if their text contains a product name
-    private suspend fun filterLabelsByProducts(labels: List<LabelResponse>): List<LabelResponse> {
-        val products = productDao.getAllProducts()
-        return labels.filter { label ->
-            products.any { product ->
-                label.text.contains(product.name, ignoreCase = true)
+    // Call this method when new label data is received from the API
+    private fun appendNewLabels(newLabels: List<LabelResponse>) {
+        var labelAdded = false
+
+        for (label in newLabels) {
+            val uniqueKey = generateUniqueKey(label)
+
+            // Skip if the label is already saved or displayed
+            if (savedLabels.contains(uniqueKey) || labelMap.containsKey(uniqueKey)) {
+                Log.d("appendNewLabels", "Skipping duplicate label: $uniqueKey")
+                continue
             }
-        }.also {
-            Log.d("Database", "Filtered labels count: ${it.size}")
+
+            // Add to displayed labels
+            labelMap[uniqueKey] = label
+            labelAdded = true
+        }
+
+        if (labelAdded) {
+            adapter.notifyDataSetChanged() // Refresh the RecyclerView
+            recyclerView.scrollToPosition(labelMap.size - 1) // Scroll to the last added label
         }
     }
 
 
-    private fun parseResponse(json: String): List<LabelResponse> {
-        val gson = Gson()
-        val type = object : TypeToken<List<LabelResponse>>() {}.type
-        return gson.fromJson(json, type)
-    }
 
-    private fun displayLabels(labels: List<LabelResponse>) {
-        val formattedText = labels.joinToString("\n\n") { label ->
-            "${label.label_id}:\n${label.text}"
-        }
-        resultsTextView.text = formattedText
-    }
 
-    private fun logProductList(productDao: ProductDao) {
-        CoroutineScope(Dispatchers.IO).launch {
-            val productList = productDao.getAllProducts()
-            if (productList.isEmpty()) {
-                Log.d("Database", "No products found in the database.")
-            } else {
-                Log.d("Database", "Products in the database:")
-                productList.forEach { product ->
-                    Log.d("Database", "Product ID: ${product.id}, Name: ${product.name}")
-                }
-            }
-        }
-    }
 
     override fun onDestroy() {
         super.onDestroy()
         cameraExecutor.shutdown()
     }
-
 }
